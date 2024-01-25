@@ -143,7 +143,11 @@ NOTES:
  *   Rating: 1
  */
 int bitXor(int x, int y) {
-  return 2;
+  // XOR == (not x and y) or (x and not y)
+  // Use DeMorgans to turn or into and
+  // XOR == not (not(not x and y) and not (x and not y))
+  int xor = ~ (~(~ x & y) & ~(x & ~y));
+  return xor;
 }
 /* 
  * tmin - return minimum two's complement integer 
@@ -152,9 +156,8 @@ int bitXor(int x, int y) {
  *   Rating: 1
  */
 int tmin(void) {
-
-  return 2;
-
+  // tmin is 1 in most significant bit 0 elsewhere
+  return 1 << 31;
 }
 //2
 /*
@@ -165,7 +168,12 @@ int tmin(void) {
  *   Rating: 1
  */
 int isTmax(int x) {
-  return 2;
+  // tmax = 0x7FFFFFFF
+  // tmax + 1 = tmin
+  // tmax + tmin = -1  -> + 1 or ~ to make 0
+  // but x = -1 so check
+  return (!((x+1)+x+1)) & (!!(x+1));
+  
 }
 /* 
  * allOddBits - return 1 if all odd-numbered bits in word set to 1
@@ -176,7 +184,15 @@ int isTmax(int x) {
  *   Rating: 2
  */
 int allOddBits(int x) {
-  return 2;
+  // make 32 bit mask with 1 in odd bits.
+  // (mask & x) to make all even bits 0
+  // (mask & x) ^ mask = 0 if all odd bits are set to 1
+  // logical not to get 1 when all odd bits are set to 1 and 0 otherwise
+  int odd = 0xAA;
+  int mask = (odd << 8) + odd;
+  mask = (mask << 8) + odd;
+  mask = (mask << 8) + odd;
+  return !((x & mask) ^ mask);
 }
 /* 
  * negate - return -x 
@@ -186,7 +202,8 @@ int allOddBits(int x) {
  *   Rating: 2
  */
 int negate(int x) {
-  return 2;
+  // not x + 1 in twos complement (tmin edge case)
+  return ~x + 1;
 }
 //3
 /* 
@@ -199,7 +216,14 @@ int negate(int x) {
  *   Rating: 3
  */
 int isAsciiDigit(int x) {
-  return 2;
+  // cond1 -> bits 4 to 31 set to 0x3 
+  // cond2 -> bit 3 not set (0x30-0x37) OR bits 1 and 2 not set bit 3 set (0x38, 0x39)
+  int cond1 = !((x >> 4) ^ 0x3);
+  int a = x & 0x0F;
+  int lt8 = (a >> 3) ^ 1;
+  int _89 = !((a >> 1) ^ 0x4);
+  int cond2 = lt8 | _89;
+  return cond1 & cond2;
 }
 /* 
  * conditional - same as x ? y : z 
@@ -209,7 +233,12 @@ int isAsciiDigit(int x) {
  *   Rating: 3
  */
 int conditional(int x, int y, int z) {
-  return 2;
+  // false case -> 0x00000000 mask
+  // true case -> !! to get 1 from any true int
+  // shift left to get 0x80000000 then shift right (arithmetic) to get 0xFFFFFFFF
+  // if mask is 0xFFFFFFFF and with any value y gives y
+  int mask = ((!!x) << 31) >> 31;
+  return (mask & y) | (~mask & z); 
 }
 /* 
  * isLessOrEqual - if x <= y  then return 1, else return 0 
@@ -219,7 +248,13 @@ int conditional(int x, int y, int z) {
  *   Rating: 3
  */
 int isLessOrEqual(int x, int y) {
-  return 2;
+  // two cases same sign and different
+  // same -> x + ~y < 0 -> x < y
+  // as we want to include equals do not + 1, deals with tMin edge case as well
+  // different -> check sign of x i.e neg x and pos y = true, pos x neg y = false
+  int diffSign = ((x^y) >> 31) & 1;
+  int less = ((x+(~y)) >> 31) & 1;
+  return (diffSign & ((x>>31) & 1)) | ((!diffSign) & less);
 }
 //4
 /* 
@@ -231,7 +266,15 @@ int isLessOrEqual(int x, int y) {
  *   Rating: 4 
  */
 int logicalNeg(int x) {
-  return 2;
+  // make last bit represent 1 present in any bit
+  // | first and second halves, for bit x in bits 0-15, bit x = 1 if bit x+ or bit x+16 were 1
+  // continue until last bit
+  x |= (x >> 16);
+  x |= (x >> 8);
+  x |= (x >> 4);
+  x |= (x >> 2);
+  x |= (x >> 1);
+  return (~x) & 1;
 }
 /* howManyBits - return the minimum number of bits required to represent x in
  *             two's complement
@@ -246,7 +289,42 @@ int logicalNeg(int x) {
  *  Rating: 4
  */
 int howManyBits(int x) {
-  return 0;
+  // find leftmost 1 bit
+  // use !! to check for any 1
+  // check upper half -> if 1 then add len(half) to res -> drop bottom half wtih >>
+  // else check bottom half 
+  // halving each step until 0; 16->8->4->2->1 + 1(minimum bit)
+  // edge case negative numbers
+  // check how many bits for ~x 
+  // as -1 only need 1 -2 only 2...
+  int flag;
+  int cnt_16, cnt_8, cnt_4, cnt_2, cnt_1, cnt_0;
+  int sign = x >> 31;
+  
+  x = (sign&(~x)) | ((~sign)&x);
+
+  flag = !!(x >> 16);
+  cnt_16 = flag << 4;
+  x = x >> cnt_16;
+
+  flag = !!(x >> 8);
+  cnt_8 = flag << 3;
+  x = x >> cnt_8;
+
+  flag = !!(x >> 4);
+  cnt_4 = flag << 2;
+  x = x >> cnt_4;
+
+  flag = !!(x >> 2);
+  cnt_2 = flag << 1;
+  x = x >> cnt_2;
+
+  flag = !!(x >> 1);
+  cnt_1 = flag;
+  x = x >> cnt_1;
+
+  cnt_0 = x;
+  return cnt_16 + cnt_8 + cnt_4 + cnt_2 + cnt_1 + cnt_0 + 1;
 }
 //float
 /* 
@@ -261,7 +339,21 @@ int howManyBits(int x) {
  *   Rating: 4
  */
 unsigned floatScale2(unsigned uf) {
-  return 2;
+  // sign always unchanged
+  // exp == 0x7FF00000 for NaN
+  // denorm > shift left 1 
+  // norm -> frac same, exp + 1
+  unsigned frac = uf & 0x7FFFFF;
+  unsigned sign = uf & 0x80000000;
+  unsigned exp = uf & 0x7F800000;
+  if (exp >= 0x7F800000 ) {
+    return uf;
+  } else if (exp == 0) {
+    return sign | ((exp+frac) << 1);
+  } else {
+    return sign | (exp + 0x800000) | frac; 
+  }
+
 }
 /* 
  * floatFloat2Int - Return bit-level equivalent of expression (int) f
@@ -276,7 +368,25 @@ unsigned floatScale2(unsigned uf) {
  *   Rating: 4
  */
 int floatFloat2Int(unsigned uf) {
-  return 2;
+  // denorm -> 0 exp < bias
+  // norm -> 32 > exp - bias (127) = exp < 159
+  //      -> need to add back implied 1 bit infront of frac -> frac is 24 bits
+  //      -> frac >> (23 - (exp-127)) = 150 -exp
+  // NaN and inf when exp > 158
+  unsigned frac = uf & 0x7FFFFF;
+  unsigned sign = uf & 0x80000000;
+  unsigned exp = (uf >> 23) & 0xFF;
+  
+  if (exp < 127) {
+    return 0;
+  } else if (exp > 158) {
+    return 0x80000000u;
+  }
+
+  frac |= 0x800000;
+  frac = frac >> (150 - exp);
+
+  return sign ? -frac : frac;
 }
 /* 
  * floatPower2 - Return bit-level equivalent of the expression 2.0^x
@@ -292,5 +402,23 @@ int floatFloat2Int(unsigned uf) {
  *   Rating: 4
  */
 unsigned floatPower2(int x) {
-    return 2;
+  // sign positive
+  // frac = 0
+  // exp = x + 127
+  // valid range x [-127, 127]
+  // exp == 0 denorm
+  int exp = x + 127;
+  if (exp < 0) {
+    return 0;
+  } else if (exp > 254) {
+    exp = 255 << 23;
+  } else {
+    exp = exp << 23;
+  }
+  if (exp == 0) {
+    return exp | (1 << 22);
+  } else {
+    return exp;
+  }
+
 }
