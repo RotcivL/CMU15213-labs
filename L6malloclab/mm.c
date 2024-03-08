@@ -39,10 +39,10 @@
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
-#define WSIZE       4       /* Word and header/footer size (bytes) */ 
-#define DSIZE       8       /* Double word size (bytes) */
-#define CHUNKSIZE  (1<<12)  /* Extend heap by this amount (bytes) */  
-#define MINSIZE     16      /* Minimum size of a block */
+#define WSIZE       4                   /* Word and header/footer size (bytes) */ 
+#define DSIZE       8                   /* Double word size (bytes) */
+#define CHUNKSIZE   ((1<<12))   /* Extend heap by this amount (bytes) */  
+#define MINSIZE     16                  /* Minimum size of a block */
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))  
 
@@ -70,7 +70,7 @@
 /* Given free block ptr bp, get pointers of next blocks */
 #define NEXT(bp)            ((void *)(*(size_t*)(bp)))
 #define SET_NEXT(bp, next)  ((*(size_t*)(bp)) = (size_t)(next))
-#define FREELIST_COUNT      8
+#define FREELIST_COUNT      12
 /* Global variables */
 static char *heap_listp = 0;    /* Pointer to first block */  
 static char *epilogue;          /* pointer to epilogue block */
@@ -190,7 +190,6 @@ void free(void *bp) {
     dbg_printf("free size %zd on address %p.\n", size, bp);
     dbg_checkheap(__LINE__);
 
-
 }
 
 /*
@@ -227,6 +226,20 @@ void *realloc(void *ptr, size_t size) {
     mm_free(ptr);
 
     return newptr;
+}
+
+/*
+ * calloc - allocate memory and set it to zero.
+ */
+void *calloc(size_t nmemb, size_t size) {
+    size *= nmemb;
+
+    void *ptr = malloc(size);
+    if (!ptr) return NULL;
+
+    memset(ptr, 0, size);
+
+    return ptr;
 }
 
 /* 
@@ -488,10 +501,10 @@ static void list_remove(void *bp) {
 
 /* 
  * find_list - find the smallest list that can contain a free block that fits the size required
- * 8 Lists in heap - lists start from 2^4 to 2^12 - 1, each list holds [2^x, 2^(x+1) - 1]
+ * 8 Lists in heap - lists start from 2^4 to 2^15, each list holds [2^x, 2^(x+1) - 1], final list [2^15, inf)
  */
 static void *find_list(size_t size) {
-    if (size >= (1 << 11)) 
+    if (size >= (1 << 15)) 
         return freeLists+(FREELIST_COUNT-1)*DSIZE;
 
     void *list = freeLists;
