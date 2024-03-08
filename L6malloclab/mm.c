@@ -67,14 +67,14 @@
 #define NEXT_BLKP(bp)  ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE))) 
 #define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE))) 
 
-/* Given free block ptr bp, get pointers of next and previous blocks */
+/* Given free block ptr bp, get pointers of next blocks */
 #define NEXT(bp)            ((void *)(*(size_t*)(bp)))
 #define SET_NEXT(bp, next)  ((*(size_t*)(bp)) = (size_t)(next))
-
+#define FREELIST_COUNT      8
 /* Global variables */
 static char *heap_listp = 0;    /* Pointer to first block */  
-static void *exp_listp;         /* free list pointer */  
 static char *epilogue;          /* pointer to epilogue block */
+static char *freeLists;         /* Pointer to start of freelist segment in heap*/
 
 
 /* Function prototypes for internal helper routines */
@@ -86,20 +86,27 @@ static void *find_fit(size_t asize);
 static void *coalesce(void *bp);
 static void *list_insert(void *bp);
 static void list_remove(void *bp);
+static void *find_list(size_t size);
+
 
 /* 
  * mm_init - Initialize the memory manager 
  */
 int mm_init(void) {
     /* Create the initial empty heap */
-    if ((heap_listp = mem_sbrk(2*WSIZE)) == (void *)-1) 
+    if ((freeLists = mem_sbrk(FREELIST_COUNT*DSIZE+2*WSIZE)) == (void *)-1) 
         return -1;
+
+    /* initialise free lists to point to null*/
+    memset(freeLists, 0, FREELIST_COUNT*DSIZE);
+
+    /* set heap pointer to end of free list */
+    heap_listp = freeLists+FREELIST_COUNT*DSIZE;
 
     PUT(heap_listp, PACK(0, 1, 1));             /* Prolgue Footer*/
     PUT(heap_listp + WSIZE, PACK(0, 1, 1));     /* Epilogue header */ 
     heap_listp += 2*WSIZE;     
-    epilogue = heap_listp;
-    exp_listp = NULL;           
+    epilogue = heap_listp;        
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE) == NULL) 
@@ -231,8 +238,8 @@ void mm_checkheap(int lineno) {
     
     // prologue at start of heap, epilogue at end of heap
     void *prologue = heap_listp-WSIZE;
-    if (HDRP(prologue) != mem_heap_lo()) {
-        printf("Prologue not first block in heap\n");
+    if (!in_heap(HDRP(prologue))) {
+        printf("Prologue not in heap bounds %p\n", HDRP(prologue));
         printf("Error in line %d\n", lineno);
     }
 
@@ -275,27 +282,37 @@ void mm_checkheap(int lineno) {
         }
     }
 
-    for (bp = exp_listp; bp; bp = NEXT(bp)) {
-        free_count--;
-        if (GET_ALLOC(HDRP(bp))) {
-            printf("Allocated block in free list\n");
-            printf("Error in line %d\n", lineno);
+    void *freeListEnd = freeLists+(FREELIST_COUNT*DSIZE);
+
+    for (void *list = freeLists; list < freeListEnd; list+=DSIZE) {
+        void *curr = list;
+        while (NEXT(curr)) {
+            free_count--;
+            void *bp = NEXT(curr);
+            if (GET_ALLOC(HDRP(bp))) {
+                printf("Allocated block in free list\n");
+                printf("Error in line %d\n", lineno);
+            }
+            curr = NEXT(curr);
         }
     }
+
 
     if (free_count) {
         printf("Free list size and number of free blocks mismatch, %d diffrence\n", free_count);
         printf("Error in line %d\n", lineno);
     }
     
-    void *slow = exp_listp, *fast = exp_listp;
-    while (fast && NEXT(fast)) {
-        slow = NEXT(slow);
-        fast = NEXT(NEXT(fast));
-        if (slow == fast) {
-            printf("Cycle in free list\n");
-            printf("Error in line %d\n", lineno);
-            break;
+    for (void *list = freeLists; list < freeListEnd; list+=DSIZE) {
+        void *slow = list, *fast = list;
+        while (NEXT(fast) && NEXT(NEXT(fast))) {
+            slow = NEXT(slow);
+            fast = NEXT(NEXT(fast));
+            if (slow == fast) {
+                printf("Cycle in free list\n");
+                printf("Error in line %d\n", lineno);
+                break;
+            }
         }
     }
 
@@ -413,14 +430,22 @@ static void place(void *bp, size_t asize) {
  * find_fit - Find a fit for a block with asize bytes 
  */
 static void *find_fit(size_t asize) {
-
+    /* get starting list */
+    void *list = find_list(asize);
+    
     /* First-fit search */
-    void *bp = exp_listp;
-    while (bp) {
-        if (GET_SIZE(HDRP(bp)) >= asize) {
-            return bp;
+    void *freeListEnd = freeLists + FREELIST_COUNT*DSIZE;
+    dbg_printf("Find list size %ld on address %p endlist %p.\n", asize, list, freeListEnd);
+
+    for (;list < freeListEnd; list +=DSIZE) {
+        void *curr = list;
+        while (NEXT(curr)) {
+            void *bp = NEXT(curr);
+            if (GET_SIZE(HDRP(bp)) >= asize) {
+                return bp;
+            }
+            curr = NEXT(curr);
         }
-        bp = NEXT(bp);
     }
 
     return NULL; /* No fit */
@@ -436,13 +461,10 @@ static void *find_fit(size_t asize) {
  */
 static void *list_insert(void *bp) {
     dbg_printf("List insert size %d on address %p.\n", GET_SIZE(HDRP(bp)),bp);
+    void *list = find_list(GET_SIZE(HDRP(bp)));
 
-    if (!exp_listp) {
-        SET_NEXT(bp, NULL);
-    } else {
-        SET_NEXT(bp, exp_listp);
-    }
-    exp_listp = bp;
+    SET_NEXT(bp, NEXT(list));
+    SET_NEXT(list, bp);
 
     return bp;
 }
@@ -452,17 +474,31 @@ static void *list_insert(void *bp) {
  */
 static void list_remove(void *bp) {
     dbg_printf("List remove size %d on address %p.\n", GET_SIZE(HDRP(bp)),bp);
-    if (exp_listp == bp) {
-        exp_listp = NEXT(bp);
-        return;
-    }
+    void *list = find_list(GET_SIZE(HDRP(bp)));
 
-    void *curr = exp_listp;
-    while (curr && NEXT(curr) != bp) {
+    void *curr = list;
+    while (NEXT(curr) && NEXT(curr) != bp) {
         curr = NEXT(curr);
     }
     if (!curr) {
         return;
     }
     SET_NEXT(curr, NEXT(bp));
+}
+
+/* 
+ * find_list - find the smallest list that can contain a free block that fits the size required
+ * 8 Lists in heap - lists start from 2^4 to 2^12 - 1, each list holds [2^x, 2^(x+1) - 1]
+ */
+static void *find_list(size_t size) {
+    if (size >= (1 << 11)) 
+        return freeLists+(FREELIST_COUNT-1)*DSIZE;
+
+    void *list = freeLists;
+    size >>= 4; 
+    while (size > 1) {
+        list += DSIZE;
+        size >>= 1;
+    }
+    return list;
 }
